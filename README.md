@@ -1,101 +1,104 @@
-# chrome-tab-group-cleaner
+# Chrome Tab Group Cleaner (Windows GUI)
 
-**Chrome has no bulk delete for saved tab groups. This is one.**
+**Chrome has no bulk delete for saved tab groups. This is one - now with a window, and it runs on Windows.**
 
-![Chrome's bookmarks bar filled end to end with identical green Claude tab group chips](docs/before.png)
+Got hundreds of saved tab groups cluttering your bookmarks bar? Load them, search
+by name, tick the ones you want gone (or grab every unnamed / "Tabs" group in one
+click), and delete them. Every delete makes a backup first.
 
-*71 saved groups, 70 of them left behind by Claude in Chrome. Chrome removes them
-one right-click at a time.*
+> Based on [franzenzenhofer/chrome-tab-group-cleaner](https://github.com/franzenzenhofer/chrome-tab-group-cleaner)
+> (MIT). This version adds Windows support and a point-and-click GUI.
 
-![The same bookmarks bar with a single chip left on it](docs/after.png)
+## Quick start (Windows)
 
-*After `delete --claude --orphans --restart`. The one group that is not Claude's
-survives.*
+1. Install [Node.js](https://nodejs.org) 20 or newer (once).
+2. Download this repo (**Code > Download ZIP**) and unzip it.
+3. Double-click **`setup.bat`** (once). It installs and builds the tool.
+4. Double-click **`start.bat`**. A page opens in your browser. Keep the black window open.
 
-## Install
+## Using the app
 
-As a Claude Code skill - the repo *is* the skill:
+1. **Load my groups** - Chrome can stay open for this step.
+2. **Search** group names, or use the **Unnamed / "Tabs" only** filter.
+3. **Select** rows one by one, shift-click for a range, or use *Select all shown* /
+   *Select unnamed / "Tabs"*.
+4. **Preview selected** to see exactly what would go, then **Delete selected**.
+
+By default the app closes Chrome, deletes, and reopens your last session (Chrome
+has to be closed for a delete). Untick that option to close Chrome yourself.
+
+"Unnamed / Tabs" means groups with no name, or a name that is only "Tab", "Tabs"
+or "3 tabs". A group called "Tabs for work" is **not** matched.
+
+## Undo
+
+Backups are saved to `C:\Users\<you>\.chrome-tab-group-cleaner\backups`. Use
+**Restore a backup** at the bottom of the app (Chrome must be closed), or run
+`node dist/cli.js restore --backup <folder> --profile Default`.
+
+## Sync
+
+If your Google account syncs tab groups, Chrome re-downloads a plain local delete,
+so the tool skips synced profiles. Two ways around it:
+
+- **Safest:** turn off **Tab groups** at `chrome://settings/syncSetup/advanced`,
+  run the delete, then decide whether to turn it back on.
+- **Experimental:** tick *also delete them from my Google account* (`--sync-tombstone`).
+  It leaves a sync tombstone so the deletion reaches your account. The original
+  author notes this is not verified against a real account - worst case, the
+  groups come back.
+
+## Command line
+
+The GUI drives the same CLI, so you can use it directly (`node dist/cli.js ...`):
 
 ```bash
-git clone https://github.com/franzenzenhofer/chrome-tab-group-cleaner.git \
-  ~/.claude/skills/chrome-tab-group-cleaner
-cd ~/.claude/skills/chrome-tab-group-cleaner && npm install && npm run build
+node dist/cli.js profiles                           # profiles, and which sync
+node dist/cli.js list --all-profiles -v             # what is there
+node dist/cli.js list --json --all-profiles         # same, machine-readable
+node dist/cli.js delete --regex "^\s*((\d+\s*)?tabs?)?\s*$" --orphans --dry-run
+node dist/cli.js delete --guids <a,b,c> --orphans --restart
+node dist/cli.js restore --backup <folder> --profile Default
 ```
 
-Then ask for it: *"get rid of all these Claude tab groups"*.
+Pick groups with `--all`, `--claude`, `--match <text>`, `--regex <pattern>` or
+`--guids <list>`. Then `--browser chrome|chromium|brave|edge`, `--profile <dir>`,
+`--all-profiles`, `--orphans`, `--dry-run`, `--restart`, `--sync-tombstone`.
 
-Rather have your agent read it first? Paste this into Claude Code instead:
+## What changed from the original
 
-```text
-Install https://github.com/franzenzenhofer/chrome-tab-group-cleaner as a global
-Claude Code skill. First clone it somewhere temporary and read SKILL.md, README.md
-and every file in src/, then tell me what it does, what it writes to, and anything
-you find questionable - it deletes records from Chrome's profile database and can
-quit my browser. If it looks wrong, stop and say so instead of installing.
+- **Windows support:** detects a running browser with `tasklist`, and `--restart`
+  quits the browser and reopens each profile with its last session.
+- **Windows file locks:** read-only snapshots no longer try to copy Chrome's
+  locked `LOCK` file.
+- **New options:** `list --json` and `delete --guids`.
+- **GUI:** `gui/` - a small local page (no extra dependencies) that runs on
+  `127.0.0.1` only.
 
-If it checks out: clone it to ~/.claude/skills/chrome-tab-group-cleaner, run
-npm install && npm run gates, and show me `node dist/cli.js list --all-profiles`.
-Never delete without a --dry-run first, never quit my browser without telling me.
-```
+Windows `--restart` is new: it asks Chrome to close normally so your session is
+saved, then reopens it. Save anything important first.
 
-As a plain CLI: clone anywhere, `npm install && npm run build`, then
-`node dist/cli.js --help`. Node 20+, one runtime dependency.
-
-## Use
-
-```bash
-chrome-tab-group-cleaner list --all-profiles -v        # what is there
-chrome-tab-group-cleaner delete --claude --dry-run     # what would go
-chrome-tab-group-cleaner delete --claude --orphans --restart
-chrome-tab-group-cleaner restore --backup ~/.chrome-tab-group-cleaner/backups/Default-...
-```
-
-Pick groups with `--all`, `--claude`, `--match <text>` or `--regex <pattern>`.
-Then `--browser chrome|chromium|brave|edge`, `--profile <dir>`, `--all-profiles`,
-`--orphans`, `--dry-run`, `--restart`, `--sync-tombstone`.
-
-The browser must be quit for a delete: the store is locked, and a live browser
-rewrites it from memory on exit. `--restart` quits it and reopens your tabs.
-Every delete backs the whole store up first; `restore` puts it back.
-
-## Where they live
+## Where saved groups live
 
 ```
 <user data>/<Profile>/Sync Data/LevelDB     one key per entity: saved_tab_group-dt-<uuid>
 
 { 1: schema version, 2: SavedTabGroupSpecifics }
 
-SavedTabGroupSpecifics { 1: guid, 2: created µs, 3: updated µs, 4: group, 5: tab }
+SavedTabGroupSpecifics { 1: guid, 2: created us, 3: updated us, 4: group, 5: tab }
   group { 2: title, 3: color, 4: position }
   tab   { 1: group guid, 2: position, 3: url, 4: title }
 ```
 
 A group is a group entity **plus** its tab entities - delete only the group and
-the tabs linger as orphans, which is how Chrome leaves them too (`--orphans`
-sweeps those). `src/proto.ts` reads this wire format directly, no protobuf
-dependency.
-
-## Sync
-
-A profile that syncs tab groups re-downloads a local delete, so `delete` refuses
-it. `--sync-tombstone` commits the deletion instead: the data record goes, its
-`sync_pb::EntityMetadata` stays with `is_deleted = 1` and `sequence_number =
-acked_sequence_number + 1`, which the sync processor reads as a pending commit
-and sends to the account.
-
-```
-1 client_tag_hash   2 server_id       3 is_deleted            4 sequence_number
-5 acked_sequence_number               6 server_version
-7 creation_time ms  8 modification_time ms                    9 specifics_hash
-```
-
-Those bytes are covered by tests, and the field numbers were read out of a live
-store. Whether a given Chrome build accepts a tombstone it did not write itself
-is not verified against a real account - worst case, the groups come back.
+the tabs linger as orphans (`--orphans` sweeps those). `src/proto.ts` reads this
+wire format directly, no protobuf dependency.
 
 ## Development
 
 `npm run gates` - typecheck, lint, test, build. Tests build real LevelDB stores
 and read them back, no mocks.
 
-MIT
+## License
+
+MIT - see `LICENSE`. Original work by Franz Enzenhofer.
