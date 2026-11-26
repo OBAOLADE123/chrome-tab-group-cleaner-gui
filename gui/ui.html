@@ -1,0 +1,127 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Tab Group Cleaner</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{--bg:#fff;--fg:#1f2328;--mut:#656d76;--line:#d8dee4;--acc:#1a73e8;--bad:#d93025;--row:#f6f8fa;--warn:#fff4d6}
+@media(prefers-color-scheme:dark){:root{--bg:#1e2327;--fg:#e6edf3;--mut:#9198a1;--line:#3b434b;--acc:#8ab4f8;--bad:#f28b82;--row:#262c33;--warn:#3b3319}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 "Segoe UI",system-ui,sans-serif}
+main{max-width:900px;margin:0 auto;padding:18px}h1{font-size:20px;margin:0 0 2px}.sub{color:var(--mut);margin:0 0 14px}
+input[type=text],select{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font:inherit}
+button{padding:8px 14px;border-radius:8px;border:1px solid var(--line);background:none;color:var(--fg);font:inherit;cursor:pointer}
+button.pri{background:var(--acc);border-color:var(--acc);color:#fff}button.danger{background:var(--bad);border-color:var(--bad);color:#fff}
+button.sm{padding:4px 10px;font-size:12px}button:disabled{opacity:.4;cursor:default}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}
+.chips button.on{background:var(--acc);border-color:var(--acc);color:#fff}
+#list{border:1px solid var(--line);border-radius:10px;max-height:46vh;overflow:auto}
+label.g{display:flex;align-items:center;gap:10px;padding:7px 12px;border-bottom:1px solid var(--line);cursor:pointer;user-select:none}
+label.g:hover{background:var(--row)}.dot{width:12px;height:12px;border-radius:50%;flex:none}
+.nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.nm.u{color:var(--mut);font-style:italic}
+.ct,.pf{color:var(--mut);font-size:12px;white-space:nowrap}
+.bar{position:sticky;bottom:0;background:var(--bg);padding:10px 0;border-top:1px solid var(--line);margin-top:10px}
+.warn{background:var(--warn);border-radius:8px;padding:10px 12px;margin:8px 0;font-size:13px}
+.hint{color:var(--mut);font-size:12px}
+pre{margin:8px 0 0;padding:10px;background:var(--row);border:1px solid var(--line);border-radius:8px;max-height:260px;overflow:auto;white-space:pre-wrap;word-break:break-word;font:12px/1.5 Consolas,monospace}
+.err{color:var(--bad)}details{margin-top:14px}summary{cursor:pointer;color:var(--mut)}
+</style></head><body><main>
+<h1>Tab Group Cleaner</h1>
+<p class="sub">Delete Chrome’s <b>saved</b> tab groups in bulk. Every delete makes a backup first.</p>
+
+<div class="row"><button id="load" class="pri">Load my groups</button>
+<select id="browser"><option value="chrome">Chrome</option><option value="edge">Edge</option><option value="brave">Brave</option><option value="chromium">Chromium</option></select>
+<span class="hint" id="status"></span></div>
+
+<div id="syncwarn" class="warn" hidden></div>
+
+<div id="tools" hidden>
+<div class="row"><input type="text" id="q" placeholder="Search group names…" style="flex:1;min-width:220px"></div>
+<div class="row chips"><button id="fAll" class="on sm">All</button><button id="fJunk" class="sm">Unnamed / “Tabs” only</button>
+<span style="flex:1"></span>
+<button class="sm" id="selShown">Select all shown</button><button class="sm" id="selJunk">Select unnamed / “Tabs”</button><button class="sm" id="selNone">Clear</button></div>
+</div>
+<div id="list"><div style="padding:20px;color:var(--mut)">Click “Load my groups”. Chrome can stay open for this step.</div></div>
+
+<div class="bar" id="actions" hidden>
+<div class="row" style="margin-top:0"><label><input type="checkbox" id="orphans" checked> Also sweep leftover orphan tabs</label>
+<label><input type="checkbox" id="restart" checked> Close Chrome, then reopen my last session</label></div>
+<div class="row" id="tombRow" hidden><label><input type="checkbox" id="tombstone"> This profile syncs tab groups: also delete them from my Google account (experimental)</label></div>
+<div class="row"><button id="preview" class="sm" disabled>Preview selected</button><button id="del" class="danger" disabled>Delete selected</button>
+<span class="hint" id="selcount">0 selected</span></div>
+</div>
+<pre id="out" hidden></pre>
+
+<details><summary>Restore a backup</summary>
+<div class="row"><input type="text" id="backup" placeholder="Backup folder, e.g. C:\Users\you\.chrome-tab-group-cleaner\backups\Default-2026-…" style="flex:1;min-width:260px">
+<input type="text" id="rprofile" value="Default" style="width:130px"><button id="restore">Restore</button></div>
+<p class="hint">Close Chrome fully first. Restoring puts the saved groups from that backup back into the profile.</p></details>
+</main>
+<script>
+const TOKEN='__TOKEN__',$=id=>document.getElementById(id);
+const COLORS={grey:'#5f6368',blue:'#1a73e8',red:'#d93025',yellow:'#f9ab00',green:'#1e8e3e',pink:'#d01884',purple:'#9334e6',cyan:'#007b83',orange:'#fa903e'};
+const isJunk=t=>/^\s*((\d+\s*)?tabs?)?\s*$/i.test(t||'');
+let profiles=[],groups=[],sel=new Set(),junkOnly=false,lastIdx=null,shown=[];
+async function run(b){try{return await (await fetch('/run',{method:'POST',body:JSON.stringify({token:TOKEN,browser:$('browser').value,...b})})).json();}
+  catch(e){return{error:'Lost connection to the app: '+e.message};}}
+function log(r){const o=$('out');o.hidden=false;o.className=(r.error||r.code)?'err':'';
+  o.textContent=r.error||`> ${r.cmd}\n\n${(r.out||'')+(r.err||'')||'(no output)'}`;o.scrollTop=o.scrollHeight;}
+async function load(){
+  $('load').disabled=true;$('status').textContent='Reading…';
+  const r=await run({action:'list'});$('load').disabled=false;
+  if(r.error||r.code){$('status').textContent='';log(r);return;}
+  try{profiles=JSON.parse(r.out);}catch{log({error:'Unexpected output from the tool:\n'+r.out});return;}
+  groups=profiles.flatMap(p=>p.groups.map(g=>({...g,profile:p.dir,pname:p.name,syncs:p.syncsTabGroups})));
+  sel=new Set([...sel].filter(k=>groups.some(g=>key(g)===k)));
+  const orph=profiles.reduce((n,p)=>n+p.orphans,0);
+  $('status').textContent=`${groups.length} groups${orph?`, ${orph} orphan tabs`:''} · ${groups.filter(g=>isJunk(g.title)).length} unnamed/“Tabs”`;
+  const sy=profiles.filter(p=>p.syncsTabGroups);
+  $('syncwarn').hidden=!sy.length;$('tombRow').hidden=!sy.length;
+  if(sy.length)$('syncwarn').innerHTML='<b>Sync is on for '+sy.map(p=>p.dir).join(', ')+'.</b> Chrome would re-download a plain local delete, so the tool skips these profiles unless you either turn off “Tab groups” in <code>chrome://settings/syncSetup/advanced</code> (safest), or tick the experimental account-delete option below.';
+  $('tools').hidden=$('actions').hidden=false;render();
+}
+const key=g=>g.profile+'|'+g.guid;
+function render(){
+  const q=$('q').value.trim().toLowerCase();
+  shown=groups.filter(g=>(!junkOnly||isJunk(g.title))&&(!q||(g.title||'(unnamed)').toLowerCase().includes(q)));
+  const L=$('list');L.innerHTML='';
+  if(!shown.length)L.innerHTML='<div style="padding:20px;color:var(--mut)">No matching groups.</div>';
+  shown.forEach((g,i)=>{
+    const l=document.createElement('label');l.className='g';
+    const cb=document.createElement('input');cb.type='checkbox';cb.checked=sel.has(key(g));
+    cb.onclick=e=>{
+      if(e.shiftKey&&lastIdx!==null){const [a,b]=[Math.min(lastIdx,i),Math.max(lastIdx,i)];
+        for(let j=a;j<=b;j++)cb.checked?sel.add(key(shown[j])):sel.delete(key(shown[j]));render();}
+      else{cb.checked?sel.add(key(g)):sel.delete(key(g));}
+      lastIdx=i;count();};
+    const d=document.createElement('span');d.className='dot';d.style.background=COLORS[g.color]||'#888';
+    const n=document.createElement('span');n.className='nm'+(g.title?'':' u');n.textContent=g.title||'(unnamed)';
+    n.title=g.tabs.slice(0,8).map(t=>t.title||t.url).join('\n');
+    const c=document.createElement('span');c.className='ct';c.textContent=g.tabs.length+(g.tabs.length===1?' tab':' tabs');
+    l.append(cb,d,n,c);
+    if(profiles.length>1){const p=document.createElement('span');p.className='pf';p.textContent=g.pname;l.append(p);}
+    L.append(l);});
+  count();
+}
+function count(){const n=sel.size;$('selcount').textContent=n+' selected';
+  $('del').disabled=$('preview').disabled=!n;$('del').textContent=n?`Delete ${n} selected`:'Delete selected';}
+$('load').onclick=load;$('q').oninput=render;
+$('fAll').onclick=()=>{junkOnly=false;$('fAll').classList.add('on');$('fJunk').classList.remove('on');render();};
+$('fJunk').onclick=()=>{junkOnly=true;$('fJunk').classList.add('on');$('fAll').classList.remove('on');render();};
+$('selShown').onclick=()=>{shown.forEach(g=>sel.add(key(g)));render();};
+$('selJunk').onclick=()=>{groups.filter(g=>isJunk(g.title)).forEach(g=>sel.add(key(g)));render();};
+$('selNone').onclick=()=>{sel.clear();render();};
+function payload(dry){
+  const chosen=groups.filter(g=>sel.has(key(g)));
+  const dirs=[...new Set(chosen.map(g=>g.profile))];
+  const base={action:'delete',dryRun:dry,orphans:$('orphans').checked,restart:$('restart').checked,tombstone:$('tombstone').checked,
+    profile:dirs.length===1?dirs[0]:null};
+  return chosen.length===groups.length?{...base,mode:'all'}:{...base,mode:'guids',guids:chosen.map(g=>g.guid)};
+}
+$('preview').onclick=async()=>{$('out').hidden=false;$('out').textContent='Running preview…';log(await run(payload(true)));};
+$('del').onclick=async()=>{
+  const n=sel.size;
+  if(!confirm(`Delete ${n} saved group${n>1?'s':''} now?\n\n`+($('restart').checked?'Chrome will close and reopen your last session.\n':'Chrome must already be fully closed.\n')+'A backup is made first.'))return;
+  $('del').disabled=true;$('out').hidden=false;$('out').textContent='Deleting… Chrome may close and reopen.';
+  const r=await run(payload(false));log(r);
+  if(!r.error&&!r.code){sel.clear();await load();}else count();};
+$('restore').onclick=async()=>{
+  if(!confirm('Restore this backup into the profile? Chrome must be closed.'))return;
+  log(await run({action:'restore',backup:$('backup').value,profile:$('rprofile').value.trim()}));};
+</script></body></html>
